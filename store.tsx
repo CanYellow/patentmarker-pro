@@ -66,7 +66,9 @@ const reducer = (state: AppState, action: Action): AppState => {
     'DELETE_ANNOTATION',
     'SET_CANVAS_SIZE',
     'UPDATE_GLOBAL_SETTINGS',
-    'SET_EXPORT_BOUNDS'
+    'SET_EXPORT_BOUNDS',
+    'LOAD_STATE',
+    'RESET_CANVAS'
   ].includes(action.type);
 
   // If it's a history action, save current state to past
@@ -210,6 +212,34 @@ const reducer = (state: AppState, action: Action): AppState => {
     }
     case 'SET_EXPORT_BOUNDS':
       return { ...stateWithHistory, exportBounds: action.payload };
+    
+    case 'LOAD_STATE':
+      return {
+        ...stateWithHistory, // keep history infrastructure
+        config: action.payload.config,
+        image: action.payload.image,
+        alignmentLines: action.payload.alignmentLines,
+        annotations: action.payload.annotations,
+        globalSettings: action.payload.globalSettings,
+        exportBounds: action.payload.exportBounds,
+        mode: ToolMode.SELECT,
+        selectedId: null,
+      };
+
+    case 'RESET_CANVAS':
+      return {
+        ...stateWithHistory,
+        image: initialState.image,
+        alignmentLines: [],
+        annotations: [],
+        exportBounds: null,
+        mode: ToolMode.SELECT,
+        selectedId: null,
+        // We generally keep config/settings or reset them? 
+        // User asked "One-click clear all content", usually implies the drawing, not the preferences.
+        // Let's keep canvas size and global settings to be friendly.
+      };
+
     default:
       return state;
   }

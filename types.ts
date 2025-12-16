@@ -54,7 +54,7 @@ export interface GlobalSettings {
   labelStartValue: number; // Initial value if no numbers found
 }
 
-// Data that defines the "Content" of the drawing (for Undo/Redo)
+// Data that defines the "Content" of the drawing (for Undo/Redo/Save)
 export interface ContentState {
   config: CanvasConfig;
   image: AppState['image'];
@@ -110,4 +110,6 @@ export type Action =
   | { type: 'UPDATE_GLOBAL_SETTINGS'; payload: Partial<GlobalSettings> }
   | { type: 'SET_EXPORT_BOUNDS'; payload: Rect | null }
   | { type: 'UNDO' }
-  | { type: 'REDO' };
+  | { type: 'REDO' }
+  | { type: 'LOAD_STATE'; payload: ContentState }
+  | { type: 'RESET_CANVAS' };

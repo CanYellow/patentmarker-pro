@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { usePatentStore } from '../store';
-import { ToolMode } from '../types';
+import { ToolMode, ContentState } from '../types';
 import { 
   MousePointer2, 
   PenTool, 
@@ -15,7 +15,10 @@ import {
   Lock,
   Unlock,
   Undo,
-  Redo
+  Redo,
+  Save,
+  FolderOpen,
+  FileX
 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import Konva from 'konva';
@@ -27,6 +30,7 @@ interface ToolbarProps {
 const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
   const { state, dispatch } = usePatentStore();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const projectInputRef = useRef<HTMLInputElement>(null);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -51,11 +55,9 @@ const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
     const stage = stageRef.current;
     
     // 1. Identify nodes to hide (Alignment Lines, Export Box, Transformers)
-    // We used name='no-export' in CanvasArea for items that shouldn't be exported
     const nodesToHide = stage.find('.no-export');
     const transformers = stage.find('Transformer');
     
-    // Hide them
     nodesToHide.forEach(node => node.hide());
     transformers.forEach(node => node.hide());
     
@@ -72,11 +74,18 @@ const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
         cropHeight = state.exportBounds.height;
     }
     
-    // 3. Reset scale to 1 for high res export based on original pixel dimensions
+    // 3. Normalize Stage Transformation for WYSIWYG Export
+    // CRITICAL FIX: To avoid offsets caused by stage panning/padding (x=50, y=50),
+    // we must temporarily reset the stage to origin (0,0) and scale (1,1).
     const oldScale = stage.scale();
+    const oldPos = stage.position();
+
     stage.scale({ x: 1, y: 1 });
+    stage.position({ x: 0, y: 0 });
     
     // 4. Generate Data URL
+    // Since we reset the stage to 0,0, the cropX/cropY (which are relative to internal content)
+    // now map perfectly to the viewport coordinates.
     const dataURL = stage.toDataURL({
       pixelRatio: 1, // Already 300 DPI native pixel dimensions
       x: cropX,
@@ -87,10 +96,9 @@ const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
     });
     
     // 5. Restore State
+    stage.position(oldPos);
     stage.scale(oldScale);
     nodesToHide.forEach(node => node.show());
-    // Transformers will reappear automatically on next render/click, or we can show them
-    // But since we didn't change selection state, showing them is fine.
     transformers.forEach(node => node.show());
 
     // 6. Download
@@ -100,6 +108,59 @@ const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  const handleSaveProject = () => {
+    const content: ContentState = {
+      config: state.config,
+      image: state.image,
+      alignmentLines: state.alignmentLines,
+      annotations: state.annotations,
+      globalSettings: state.globalSettings,
+      exportBounds: state.exportBounds
+    };
+    
+    const jsonStr = JSON.stringify(content, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'patent_project.json';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleLoadProject = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const content = JSON.parse(reader.result as string) as ContentState;
+          // Basic validation
+          if (content.config && content.annotations) {
+             dispatch({ type: 'LOAD_STATE', payload: content });
+          } else {
+             alert('Invalid project file format.');
+          }
+        } catch (err) {
+          console.error(err);
+          alert('Failed to load project file.');
+        }
+      };
+      reader.readAsText(file);
+    }
+    // Reset input
+    if (e.target) e.target.value = '';
+  };
+
+  const handleClearAll = () => {
+    if (window.confirm("Are you sure you want to clear all content? This cannot be undone (easily).")) {
+      dispatch({ type: 'RESET_CANVAS' });
+    }
   };
 
   const addVerticalLine = () => {
@@ -152,9 +213,43 @@ const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
   };
 
   return (
-    <div className="h-full w-16 bg-gray-900 flex flex-col items-center py-4 gap-4 shadow-xl z-50">
+    <div className="h-full w-16 bg-gray-900 flex flex-col items-center py-4 gap-4 shadow-xl z-50 overflow-y-auto no-scrollbar">
       <div className="text-white font-bold text-xs mb-2">PatentPro</div>
       
+      {/* File Operations */}
+      <button
+        onClick={() => projectInputRef.current?.click()}
+        className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition"
+        title="Open Project"
+      >
+        <FolderOpen size={24} />
+      </button>
+      <input
+        type="file"
+        ref={projectInputRef}
+        onChange={handleLoadProject}
+        accept=".json"
+        className="hidden"
+      />
+
+      <button
+        onClick={handleSaveProject}
+        className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition"
+        title="Save Project"
+      >
+        <Save size={24} />
+      </button>
+      
+      <button
+        onClick={handleClearAll}
+        className="p-2 rounded-lg text-red-400 hover:text-white hover:bg-red-900/30 transition"
+        title="Clear All Content"
+      >
+        <FileX size={24} />
+      </button>
+
+      <div className="h-px w-10 bg-gray-700 my-1" />
+
       <button
         onClick={() => dispatch({ type: 'SET_MODE', payload: ToolMode.SELECT })}
         className={`p-2 rounded-lg transition ${state.mode === ToolMode.SELECT ? 'bg-blue-600 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
