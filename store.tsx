@@ -35,6 +35,7 @@ const initialState: AppState = {
     labelStep: 1,
     labelStartValue: 1,
   },
+  exportBounds: null,
 };
 
 const reducer = (state: AppState, action: Action): AppState => {
@@ -112,8 +113,32 @@ const reducer = (state: AppState, action: Action): AppState => {
         },
       };
     }
-    case 'UPDATE_GLOBAL_SETTINGS':
-      return { ...state, globalSettings: { ...state.globalSettings, ...action.payload } };
+    case 'UPDATE_GLOBAL_SETTINGS': {
+      // Rule: "Any adjustment acts on all marked lead lines"
+      // We update the global settings
+      const newSettings = { ...state.globalSettings, ...action.payload };
+      
+      // And we strictly update all existing annotations to match the new visual styles
+      // if those specific visual styles were part of the payload.
+      const updatedAnnotations = state.annotations.map(ann => {
+          const newAnn = { ...ann };
+          if (action.payload.fontSize !== undefined) {
+              newAnn.fontSize = action.payload.fontSize;
+          }
+          if (action.payload.strokeWidth !== undefined) {
+              newAnn.strokeWidth = action.payload.strokeWidth;
+          }
+          return newAnn;
+      });
+
+      return { 
+          ...state, 
+          globalSettings: newSettings,
+          annotations: updatedAnnotations
+      };
+    }
+    case 'SET_EXPORT_BOUNDS':
+      return { ...state, exportBounds: action.payload };
     default:
       return state;
   }

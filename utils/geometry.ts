@@ -20,9 +20,6 @@ export const getBezierPoint = (t: number, p0: Point, p1: Point, p2: Point, p3: P
 
 /**
  * Calculates control points for a patent-style lead line.
- * Rule 8: Bounding box logic.
- * Rule 9: Template based.
- * Rule 11: Perpendicular to alignment line if snapped.
  */
 export const calculateSmartControlPoints = (
   start: Point,
@@ -37,37 +34,23 @@ export const calculateSmartControlPoints = (
   let cp1 = { x: start.x, y: start.y };
   let cp2 = { x: end.x, y: end.y };
 
-  // Heuristic: Is the dominant direction horizontal or vertical?
   const isHorizontalish = absDx > absDy;
 
-  // Basic S-curve or C-curve template
-  // We generally want the curve to leave Start and arrive at End smoothly.
-  
   if (snappedLine) {
-    // Constraint: Tangent at End MUST be perpendicular to the line.
     if (snappedLine.type === 'vertical') {
-      // Line is x = C. Normal is horizontal. Tangent should be horizontal (dx/dt != 0, dy/dt = 0)
-      // So CP2 must have same Y as End.
+      // Tangent perpendicular to vertical line -> Horizontal
       cp2 = { x: end.x - (dx * 0.5), y: end.y };
-      
-      // Adjust CP1 to smooth the start
       cp1 = { x: start.x + (dx * 0.5), y: start.y };
     } else {
-      // Line is y = C. Normal is vertical. Tangent should be vertical.
-      // So CP2 must have same X as End.
+      // Tangent perpendicular to horizontal line -> Vertical
       cp2 = { x: end.x, y: end.y - (dy * 0.5) };
-      
-      // Adjust CP1
       cp1 = { x: start.x, y: start.y + (dy * 0.5) };
     }
   } else {
-    // Default Rule 8: Parallel to long side of bounding box.
     if (isHorizontalish) {
-      // Long side is X. Tangents horizontal.
       cp1 = { x: start.x + dx * 0.5, y: start.y };
       cp2 = { x: end.x - dx * 0.5, y: end.y };
     } else {
-      // Long side is Y. Tangents vertical.
       cp1 = { x: start.x, y: start.y + dy * 0.5 };
       cp2 = { x: end.x, y: end.y - dy * 0.5 };
     }
@@ -91,7 +74,6 @@ export const findSnapLine = (
       if (dist < bestDist) {
         bestDist = dist;
         snappedPoint.x = line.value;
-        // Keep Y same
         bestLine = line;
       }
     } else {
@@ -99,7 +81,6 @@ export const findSnapLine = (
       if (dist < bestDist) {
         bestDist = dist;
         snappedPoint.y = line.value;
-        // Keep X same
         bestLine = line;
       }
     }
@@ -108,32 +89,85 @@ export const findSnapLine = (
   return { point: snappedPoint, line: bestLine };
 };
 
+export type TextDirection = 'UP' | 'DOWN' | 'LEFT' | 'RIGHT';
+
 /**
- * Calculates position for text based on the tangent at the end of the curve.
- * Rule 12: Fixed distance.
+ * Determines the layout direction for text based on the tangent.
+ * Now returns strictly the direction enum to allow precise rendering in the component.
  */
-export const calculateTextPosition = (
+export const calculateTextDirection = (
   end: Point,
-  cp2: Point,
-  offset: number
-): Point => {
+  cp2: Point
+): TextDirection => {
   // Vector from CP2 to End is the tangent direction.
   let dx = end.x - cp2.x;
   let dy = end.y - cp2.y;
   
-  // If points are identical (degenerate), default to right
   if (dx === 0 && dy === 0) {
-    dx = 1;
+    dx = 1; 
   }
 
+  // Normalize (not strictly necessary for sign check but good for debugging)
   const len = Math.sqrt(dx * dx + dy * dy);
   const uX = dx / len;
   const uY = dy / len;
 
-  return {
-    x: end.x + uX * offset,
-    y: end.y + uY * offset,
-  };
+  // Determine dominant direction
+  const isHorizontal = Math.abs(uX) > Math.abs(uY);
+
+  if (isHorizontal) {
+    if (uX > 0) return 'RIGHT';
+    return 'LEFT';
+  } else {
+     if (uY > 0) return 'DOWN';
+     return 'UP';
+  }
+};
+
+/**
+ * Returns points [x1, y1, x2, y2...] for a sharp, concave arrow head
+ */
+export const calculateArrowPoints = (
+    tip: Point,
+    from: Point, // Usually ControlPoint1
+    length: number = 15,
+    width: number = 10,
+    concavity: number = 0.3 // 0 to 1, how deep the back is
+): number[] => {
+    const dx = tip.x - from.x;
+    const dy = tip.y - from.y;
+    const angle = Math.atan2(dy, dx);
+
+    // Template points relative to tip (0,0) facing 0 degrees (Right)
+    // Tip: (0,0)
+    // Top Back: (-length, -width/2)
+    // Bottom Back: (-length, width/2)
+    // Concave center: (-length * (1 - concavity), 0)
+
+    const baseX = -length;
+    const halfW = width / 2;
+    const innerX = -length * (1 - concavity);
+
+    const points = [
+        { x: 0, y: 0 },
+        { x: baseX, y: -halfW },
+        { x: innerX, y: 0 },
+        { x: baseX, y: halfW }
+    ];
+
+    // Rotate and Translate
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+
+    const result: number[] = [];
+    points.forEach(p => {
+        const rX = p.x * cos - p.y * sin;
+        const rY = p.x * sin + p.y * cos;
+        result.push(tip.x + rX);
+        result.push(tip.y + rY);
+    });
+
+    return result;
 };
 
 export const cycleStartStyle = (current: StartStyle): StartStyle => {

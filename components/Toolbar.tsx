@@ -10,7 +10,8 @@ import {
   Download,
   ZoomIn,
   ZoomOut,
-  Trash2
+  Trash2,
+  Crop
 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import Konva from 'konva';
@@ -43,31 +44,52 @@ const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
 
   const handleExport = () => {
     if (!stageRef.current) return;
+    const stage = stageRef.current;
     
-    // Rule 13: Export annotated image (excluding alignment lines, which are on a separate layer/logic or we hide them)
-    // We need to temporarily hide alignment lines visual if they were drawn on the same canvas (logic handled in CanvasArea)
-    // Or simpler: We just export. The implementation in CanvasArea will handle visibility.
-    // Calculate cropping area.
+    // 1. Identify nodes to hide (Alignment Lines, Export Box, Transformers)
+    // We used name='no-export' in CanvasArea for items that shouldn't be exported
+    const nodesToHide = stage.find('.no-export');
+    const transformers = stage.find('Transformer');
     
-    const scale = state.viewScale;
+    // Hide them
+    nodesToHide.forEach(node => node.hide());
+    transformers.forEach(node => node.hide());
     
-    // Reset scale to 1 for high res export
-    const oldScale = stageRef.current.scale();
-    stageRef.current.scale({ x: 1, y: 1 });
+    // 2. Determine Export Crop Area
+    let cropX = 0;
+    let cropY = 0;
+    let cropWidth = state.config.pixelWidth;
+    let cropHeight = state.config.pixelHeight;
+
+    if (state.exportBounds) {
+        cropX = state.exportBounds.x;
+        cropY = state.exportBounds.y;
+        cropWidth = state.exportBounds.width;
+        cropHeight = state.exportBounds.height;
+    }
     
-    // Find bounding box of image + annotations
-    // Default to canvas size if simple
-    const dataURL = stageRef.current.toDataURL({
-      pixelRatio: 1, // Already 300 DPI native
-      x: 0,
-      y: 0,
-      width: state.config.pixelWidth,
-      height: state.config.pixelHeight,
+    // 3. Reset scale to 1 for high res export based on original pixel dimensions
+    const oldScale = stage.scale();
+    stage.scale({ x: 1, y: 1 });
+    
+    // 4. Generate Data URL
+    const dataURL = stage.toDataURL({
+      pixelRatio: 1, // Already 300 DPI native pixel dimensions
+      x: cropX,
+      y: cropY,
+      width: cropWidth,
+      height: cropHeight,
+      mimeType: 'image/png'
     });
     
-    // Restore preview scale
-    stageRef.current.scale(oldScale);
+    // 5. Restore State
+    stage.scale(oldScale);
+    nodesToHide.forEach(node => node.show());
+    // Transformers will reappear automatically on next render/click, or we can show them
+    // But since we didn't change selection state, showing them is fine.
+    transformers.forEach(node => node.show());
 
+    // 6. Download
     const link = document.createElement('a');
     link.download = 'patent_figure.png';
     link.href = dataURL;
@@ -92,10 +114,36 @@ const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
     dispatch({ type: 'SET_MODE', payload: ToolMode.SELECT });
   };
 
+  const toggleExportArea = () => {
+      if (state.exportBounds) {
+          // If it exists, select it
+          dispatch({ type: 'SELECT_ITEM', payload: 'EXPORT_BOUNDS' });
+          dispatch({ type: 'SET_MODE', payload: ToolMode.SELECT });
+      } else {
+          // Create default export bounds (e.g., 80% of canvas)
+          const w = state.config.pixelWidth * 0.8;
+          const h = state.config.pixelHeight * 0.8;
+          const x = (state.config.pixelWidth - w) / 2;
+          const y = (state.config.pixelHeight - h) / 2;
+          
+          dispatch({
+              type: 'SET_EXPORT_BOUNDS',
+              payload: { x, y, width: w, height: h }
+          });
+          dispatch({ type: 'SELECT_ITEM', payload: 'EXPORT_BOUNDS' });
+          dispatch({ type: 'SET_MODE', payload: ToolMode.SELECT });
+      }
+  };
+
   const deleteSelected = () => {
     if (state.selectedId) {
-      dispatch({ type: 'DELETE_ANNOTATION', payload: state.selectedId });
-      dispatch({ type: 'DELETE_ALIGNMENT_LINE', payload: state.selectedId });
+      if (state.selectedId === 'EXPORT_BOUNDS') {
+          dispatch({ type: 'SET_EXPORT_BOUNDS', payload: null });
+          dispatch({ type: 'SELECT_ITEM', payload: null });
+      } else {
+          dispatch({ type: 'DELETE_ANNOTATION', payload: state.selectedId });
+          dispatch({ type: 'DELETE_ALIGNMENT_LINE', payload: state.selectedId });
+      }
     }
   };
 
@@ -135,6 +183,14 @@ const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
         title="Add Horizontal Alignment Line"
       >
         <AlignHorizontalJustifyStart size={24} />
+      </button>
+
+      <button
+        onClick={toggleExportArea}
+        className={`p-2 rounded-lg transition ${state.exportBounds ? 'text-blue-400' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+        title="Set Export Area / Crop"
+      >
+        <Crop size={24} />
       </button>
 
       <div className="h-px w-10 bg-gray-700 my-1" />

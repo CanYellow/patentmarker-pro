@@ -11,4 +11,4 @@ export const ANNOTATION_SELECTED_COLOR = '#ef4444'; // red-500
 export const FONT_SIZE_PT = 12;
 
 export const SNAP_THRESHOLD_PX = 30; // High threshold for easier snapping on high DPI
-export const TEXT_OFFSET_PX = 20; // Distance from end point to text
+export const TEXT_OFFSET_PX = 8; // Reduced from 20 to 8 for tighter, consistent spacing

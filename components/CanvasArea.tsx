@@ -1,9 +1,8 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { Stage, Layer, Image as KonvaImage, Rect, Group, Line, Circle, Text, Arrow, Transformer } from 'react-konva';
 import useImage from 'use-image';
 import Konva from 'konva';
-// Explicitly import shapes to ensure they are registered with Konva
-// This fixes errors where shapes are missing from the Konva instance when using esm.sh
+// Explicitly import shapes to ensure they are registered with Konva Core
 import 'konva/lib/shapes/Rect';
 import 'konva/lib/shapes/Image';
 import 'konva/lib/shapes/Line';
@@ -19,7 +18,9 @@ import {
     getBezierPoint, 
     calculateSmartControlPoints, 
     findSnapLine, 
-    calculateTextPosition,
+    calculateTextDirection,
+    TextDirection,
+    calculateArrowPoints,
     cycleStartStyle 
 } from '../utils/geometry';
 import { 
@@ -48,12 +49,77 @@ const getNextLabel = (annotations: Annotation[], step: number, startValue: numbe
     }
   });
 
-  // If no numbers exist, use the configured start value.
-  // If numbers exist, use max + step.
   if (!hasNumber) {
       return startValue.toString();
   }
   return (max + step).toString();
+};
+
+// Canvas context for measuring text width accurately
+let measureContext: CanvasRenderingContext2D | null = null;
+const getTextWidth = (text: string, fontSize: number): number => {
+    if (!measureContext) {
+        const canvas = document.createElement('canvas');
+        measureContext = canvas.getContext('2d');
+    }
+    if (measureContext) {
+        measureContext.font = `${fontSize}px Arial`;
+        return measureContext.measureText(text).width;
+    }
+    return text.length * fontSize * 0.6; // Fallback
+};
+
+const getLabelTransform = (
+    endPoint: Point, 
+    controlPoint2: Point, 
+    text: string, 
+    fontSize: number, 
+    gap: number
+): { x: number, y: number, align: string, offsetX: number, offsetY: number, direction: TextDirection } => {
+    const direction = calculateTextDirection(endPoint, controlPoint2);
+    const width = getTextWidth(text, fontSize);
+    const height = fontSize; // Approximate height for centering (Arial cap height)
+
+    let x = endPoint.x;
+    let y = endPoint.y;
+    let offsetX = 0;
+    // We center text vertically using offsetY = fontSize / 2, 
+    // so y corresponds to the vertical center of the text block.
+
+    switch (direction) {
+        case 'RIGHT':
+            x = endPoint.x + gap;
+            y = endPoint.y;
+            offsetX = 0; // Anchor is left edge
+            break;
+        case 'LEFT':
+            x = endPoint.x - gap;
+            y = endPoint.y;
+            offsetX = width; // Anchor is right edge
+            break;
+        case 'UP':
+            x = endPoint.x;
+            y = endPoint.y - gap;
+            offsetX = width / 2; // Center horizontally
+            // The default Text rendering with verticalAlign="middle" and offsetY=height/2 means 
+            // the `y` coord is the vertical center. 
+            // If we want the text *Bottom* to be at `end.y - gap`:
+            // The bottom of text block is `y + height/2` (relative to center).
+            // So we want the center to be at `end.y - gap - height/2`.
+            y = endPoint.y - gap - (height / 2);
+            break;
+        case 'DOWN':
+            x = endPoint.x;
+            y = endPoint.y + gap + (height / 2);
+            offsetX = width / 2; // Center horizontally
+            break;
+    }
+    
+    // We use a fixed offsetY to center the text vertically around the calculated point y
+    // However, for UP/DOWN we shifted Y manually to account for height.
+    // For LEFT/RIGHT, Y is exactly the line end, so centering is perfect.
+    
+    return { x, y, align: 'left', offsetX, offsetY: height / 2, direction };
 };
 
 const BackgroundImage = ({ imageState, isSelected, onSelect, onChange }: any) => {
@@ -123,10 +189,34 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
   const [tempAnnotation, setTempAnnotation] = useState<Partial<Annotation> | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const exportBoundsRef = useRef<Konva.Rect>(null);
+  const exportTrRef = useRef<Konva.Transformer>(null);
 
   // Interaction State
   const isDrawing = useRef(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Auto-fit Zoom on Mount (Fix Issue 1)
+  useEffect(() => {
+    if (containerRef.current && state.config.pixelWidth > 0) {
+        // Delay slightly to ensure layout is done
+        setTimeout(() => {
+            if (!containerRef.current) return;
+            const { clientWidth, clientHeight } = containerRef.current;
+            const padding = 100;
+            const availableWidth = clientWidth - padding;
+            const availableHeight = clientHeight - padding;
+            
+            const scaleX = availableWidth / state.config.pixelWidth;
+            const scaleY = availableHeight / state.config.pixelHeight;
+            
+            // Fit to screen, but don't zoom in excessively if the screen is huge relative to canvas
+            const optimalScale = Math.min(scaleX, scaleY);
+            
+            dispatch({ type: 'SET_VIEW_SCALE', payload: optimalScale });
+        }, 10);
+    }
+  }, []); // Run once on mount
 
   // Focus input when editing starts
   useEffect(() => {
@@ -136,7 +226,16 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
     }
   }, [editingId]);
 
-  // Handle Tab key for cycling styles (Rule 10)
+  // Handle Export Bounds Transformer
+  useEffect(() => {
+      if (state.selectedId === 'EXPORT_BOUNDS' && exportTrRef.current && exportBoundsRef.current) {
+          exportTrRef.current.nodes([exportBoundsRef.current]);
+          exportTrRef.current.getLayer()?.batchDraw();
+      }
+  }, [state.selectedId, state.exportBounds]);
+
+
+  // Handle Tab key for cycling styles
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't intercept if editing text
@@ -151,8 +250,13 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
           if(state.selectedId && !editingId) {
-            dispatch({ type: 'DELETE_ANNOTATION', payload: state.selectedId });
-            dispatch({ type: 'DELETE_ALIGNMENT_LINE', payload: state.selectedId });
+            if (state.selectedId === 'EXPORT_BOUNDS') {
+                dispatch({ type: 'SET_EXPORT_BOUNDS', payload: null });
+                dispatch({ type: 'SELECT_ITEM', payload: null });
+            } else {
+                dispatch({ type: 'DELETE_ANNOTATION', payload: state.selectedId });
+                dispatch({ type: 'DELETE_ALIGNMENT_LINE', payload: state.selectedId });
+            }
           }
       }
     };
@@ -242,27 +346,50 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
   
   if (editingAnnotation) {
     const fontSize = editingAnnotation.fontSize || state.globalSettings.fontSize;
-    const textPos = calculateTextPosition(editingAnnotation.endPoint, editingAnnotation.controlPoint2, TEXT_OFFSET_PX);
-    // Convert to screen coordinates relative to container
-    // Stage x=50, y=50. Scale = viewScale.
-    const screenX = 50 + textPos.x * state.viewScale;
-    const screenY = 50 + textPos.y * state.viewScale;
+    const layout = getLabelTransform(
+        editingAnnotation.endPoint, 
+        editingAnnotation.controlPoint2, 
+        editingAnnotation.text, 
+        fontSize, 
+        TEXT_OFFSET_PX
+    );
+    
+    // Convert canvas pos to screen pos
+    const screenX = 50 + layout.x * state.viewScale;
+    const screenY = 50 + layout.y * state.viewScale;
+
+    // Adjust for HTML element origin (top-left) vs Konva offset logic
+    // We want the input to overlap the text exactly.
+    // Layout.x/y is the Center-Left, Center-Right, or Center-Top/Bottom depending on direction.
+    // Simpler approach for Input: Centered on the calculated visual center.
+    
+    // Calculate visual center of text
+    let visualCenterX = layout.x;
+    let visualCenterY = layout.y;
+
+    const width = getTextWidth(editingAnnotation.text, fontSize);
+    
+    if (layout.direction === 'LEFT') visualCenterX -= width / 2;
+    if (layout.direction === 'RIGHT') visualCenterX += width / 2;
+    // For UP/DOWN, x is already centered.
+    
+    // Y is roughly center due to logic in getLabelTransform
     
     inputStyle = {
         display: 'block',
         position: 'absolute',
-        left: `${screenX}px`,
-        top: `${screenY}px`,
+        left: `${50 + visualCenterX * state.viewScale}px`,
+        top: `${50 + visualCenterY * state.viewScale}px`,
         transform: 'translate(-50%, -50%)',
         fontSize: `${fontSize * state.viewScale}px`,
         fontFamily: 'Arial',
         textAlign: 'center',
-        padding: '2px',
+        padding: '0',
         zIndex: 50,
-        width: `${Math.max(50, editingAnnotation.text.length * fontSize)}px`,
+        width: `${Math.max(30, width * state.viewScale + 10)}px`,
         backgroundColor: 'rgba(255, 255, 255, 0.9)',
         border: '1px solid #3b82f6',
-        borderRadius: '4px',
+        borderRadius: '2px',
         outline: 'none',
         boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
     };
@@ -273,7 +400,6 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
         setEditingId(null);
     } else if (e.key === 'Tab') {
         e.preventDefault();
-        // Cycle to next annotation
         const currentIndex = state.annotations.findIndex(a => a.id === editingId);
         if (currentIndex !== -1) {
             const nextIndex = (currentIndex + 1) % state.annotations.length;
@@ -340,10 +466,23 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
             const isSelected = state.selectedId === ann.id;
             const isEditing = editingId === ann.id;
             const color = isSelected ? ANNOTATION_SELECTED_COLOR : ANNOTATION_COLOR;
-            const textPos = calculateTextPosition(ann.endPoint, ann.controlPoint2, TEXT_OFFSET_PX);
             const fontSize = ann.fontSize || state.globalSettings.fontSize;
             const strokeWidth = ann.strokeWidth || state.globalSettings.strokeWidth;
             
+            // Calculate Layout (Fix Issues 2 & 3)
+            const layout = getLabelTransform(
+                ann.endPoint, 
+                ann.controlPoint2, 
+                ann.text, 
+                fontSize, 
+                TEXT_OFFSET_PX
+            );
+
+            // Custom Arrow Head Points
+            const arrowPoints = ann.startStyle === StartStyle.ARROW 
+                ? calculateArrowPoints(ann.startPoint, ann.controlPoint1, 15, 10, 0.4) 
+                : [];
+
             return (
               <Group 
                 key={ann.id}
@@ -379,22 +518,21 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
                   hitStrokeWidth={10}
                 />
                 
-                {/* Start Marker */}
+                {/* Custom Sharp Arrow Head */}
                 {ann.startStyle === StartStyle.ARROW && (
-                    <Arrow
-                        points={[ann.controlPoint1.x, ann.controlPoint1.y, ann.startPoint.x, ann.startPoint.y]}
-                        pointerLength={10}
-                        pointerWidth={10}
+                    <Line
+                        points={arrowPoints}
                         fill={color}
-                        stroke={color}
-                        strokeWidth={strokeWidth}
+                        closed={true}
+                        stroke={null} // No stroke to avoid rounded corners if strokeWidth is high
                     />
                 )}
+                {/* Dot */}
                 {ann.startStyle === StartStyle.DOT && (
                     <Circle
                         x={ann.startPoint.x}
                         y={ann.startPoint.y}
-                        radius={strokeWidth * 1.5}
+                        radius={strokeWidth * 2}
                         fill={color}
                     />
                 )}
@@ -402,16 +540,16 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
                 {/* Text Label - Hidden if Editing */}
                 {!isEditing && (
                     <Text
-                        x={textPos.x}
-                        y={textPos.y}
+                        x={layout.x}
+                        y={layout.y}
                         text={ann.text}
                         fontSize={fontSize}
                         fontFamily="Arial"
                         fill={color}
-                        align="center"
+                        align={layout.align}
                         verticalAlign="middle"
-                        offsetX={ann.text.length * (fontSize / 4)} // Approximate centering
-                        offsetY={fontSize / 2}
+                        offsetX={layout.offsetX}
+                        offsetY={layout.offsetY}
                         onClick={(e) => {
                             e.cancelBubble = true;
                             setEditingId(ann.id);
@@ -439,41 +577,53 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
                   bezier={true}
                 />
                  {tempAnnotation.startStyle === StartStyle.ARROW && (
-                    <Arrow
-                        points={[tempAnnotation.controlPoint1!.x, tempAnnotation.controlPoint1!.y, tempAnnotation.startPoint.x, tempAnnotation.startPoint.y]}
-                        pointerLength={10}
-                        pointerWidth={10}
+                    <Line
+                        points={calculateArrowPoints(tempAnnotation.startPoint, tempAnnotation.controlPoint1!, 15, 10, 0.4)}
                         fill={ANNOTATION_COLOR}
-                        stroke={ANNOTATION_COLOR}
-                        strokeWidth={tempAnnotation.strokeWidth || 2}
+                        closed={true}
                     />
                 )}
                  {tempAnnotation.startStyle === StartStyle.DOT && (
                     <Circle
                         x={tempAnnotation.startPoint.x}
                         y={tempAnnotation.startPoint.y}
-                        radius={(tempAnnotation.strokeWidth || 2) * 1.5}
+                        radius={(tempAnnotation.strokeWidth || 2) * 2}
                         fill={ANNOTATION_COLOR}
                     />
                 )}
-                 <Text
-                    x={calculateTextPosition(tempAnnotation.endPoint, tempAnnotation.controlPoint2!, TEXT_OFFSET_PX).x}
-                    y={calculateTextPosition(tempAnnotation.endPoint, tempAnnotation.controlPoint2!, TEXT_OFFSET_PX).y}
-                    text={tempAnnotation.text || ''}
-                    fontSize={tempAnnotation.fontSize || 24}
-                    fill={ANNOTATION_COLOR}
-                    opacity={0.5}
-                />
+                {(() => {
+                    const tempLayout = getLabelTransform(
+                        tempAnnotation.endPoint, 
+                        tempAnnotation.controlPoint2!, 
+                        tempAnnotation.text || '', 
+                        tempAnnotation.fontSize || 24, 
+                        TEXT_OFFSET_PX
+                    );
+                    return (
+                        <Text
+                            x={tempLayout.x}
+                            y={tempLayout.y}
+                            text={tempAnnotation.text || ''}
+                            fontSize={tempAnnotation.fontSize || 24}
+                            fill={ANNOTATION_COLOR}
+                            opacity={0.5}
+                            offsetX={tempLayout.offsetX}
+                            offsetY={tempLayout.offsetY}
+                            verticalAlign="middle"
+                        />
+                    );
+                })()}
              </Group>
           )}
 
-          {/* Alignment Lines Layer */}
+          {/* Alignment Lines Layer - Tagged with 'no-export' to be hidden during export */}
           {state.alignmentLines.map((line) => {
               const isSelected = state.selectedId === line.id;
               // Group is positioned AT the line value, so dragging works intuitively
               return (
                   <Group
                     key={line.id}
+                    name="no-export" 
                     x={line.type === 'vertical' ? line.value : 0}
                     y={line.type === 'horizontal' ? line.value : 0}
                     draggable={state.mode === ToolMode.SELECT}
@@ -517,6 +667,67 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
                   </Group>
               )
           })}
+
+          {/* Export Bounds (Crop Box) - Tagged with 'no-export' */}
+          {state.exportBounds && (
+            <>
+              <Rect
+                  ref={exportBoundsRef}
+                  name="no-export"
+                  x={state.exportBounds.x}
+                  y={state.exportBounds.y}
+                  width={state.exportBounds.width}
+                  height={state.exportBounds.height}
+                  stroke={ALIGNMENT_LINE_COLOR}
+                  strokeWidth={2}
+                  dash={[10, 5]}
+                  fillEnabled={false}
+                  draggable={state.mode === ToolMode.SELECT}
+                  onClick={() => dispatch({ type: 'SELECT_ITEM', payload: 'EXPORT_BOUNDS' })}
+                  onDragEnd={(e) => {
+                      dispatch({
+                          type: 'SET_EXPORT_BOUNDS',
+                          payload: {
+                              ...state.exportBounds!,
+                              x: e.target.x(),
+                              y: e.target.y(),
+                          }
+                      })
+                  }}
+                  onTransformEnd={(e) => {
+                      const node = exportBoundsRef.current;
+                      if (!node) return;
+                      const scaleX = node.scaleX();
+                      const scaleY = node.scaleY();
+                      
+                      // Reset scale and update dimensions directly
+                      node.scaleX(1);
+                      node.scaleY(1);
+                      
+                      dispatch({
+                          type: 'SET_EXPORT_BOUNDS',
+                          payload: {
+                              x: node.x(),
+                              y: node.y(),
+                              width: Math.max(5, node.width() * scaleX),
+                              height: Math.max(5, node.height() * scaleY),
+                          }
+                      });
+                  }}
+              />
+              {state.selectedId === 'EXPORT_BOUNDS' && (
+                  <Transformer
+                      ref={exportTrRef}
+                      rotateEnabled={false}
+                      boundBoxFunc={(oldBox, newBox) => {
+                        if (newBox.width < 5 || newBox.height < 5) return oldBox;
+                        return newBox;
+                      }}
+                  />
+              )}
+            </>
+          )}
+
         </Layer>
       </Stage>
     </div>

@@ -13,6 +13,13 @@ export enum StartStyle {
   DOT = 'DOT',
 }
 
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface AlignmentLine {
   id: string;
   type: 'vertical' | 'horizontal';
@@ -65,6 +72,7 @@ export interface AppState {
   viewScale: number; // For UI zooming
   activeAnnotationId: string | null; // Currently being drawn
   globalSettings: GlobalSettings;
+  exportBounds: Rect | null; // User-defined export crop area
 }
 
 export type Action =
@@ -80,4 +88,5 @@ export type Action =
   | { type: 'SELECT_ITEM'; payload: string | null }
   | { type: 'SET_VIEW_SCALE'; payload: number }
   | { type: 'SET_CANVAS_SIZE'; payload: { widthMM: number; heightMM: number } }
-  | { type: 'UPDATE_GLOBAL_SETTINGS'; payload: Partial<GlobalSettings> };
+  | { type: 'UPDATE_GLOBAL_SETTINGS'; payload: Partial<GlobalSettings> }
+  | { type: 'SET_EXPORT_BOUNDS'; payload: Rect | null };
