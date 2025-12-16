@@ -96,21 +96,21 @@ const PropertyBar: React.FC = () => {
                   />
               </div>
               <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-gray-500 uppercase">Font Size</span>
+                  <span className="text-xs font-bold text-gray-500 uppercase">Font Size (px)</span>
                   <input
                       type="number"
                       value={globalSettings.fontSize}
                       onChange={(e) => handleGlobalSettingChange('fontSize', e.target.value)}
-                      className="w-12 border rounded px-1 py-1 text-sm"
+                      className="w-14 border rounded px-1 py-1 text-sm"
                   />
               </div>
                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-gray-500 uppercase">Line Width</span>
+                  <span className="text-xs font-bold text-gray-500 uppercase">Line Width (px)</span>
                   <input
                       type="number"
                       value={globalSettings.strokeWidth}
                       onChange={(e) => handleGlobalSettingChange('strokeWidth', e.target.value)}
-                      className="w-12 border rounded px-1 py-1 text-sm"
+                      className="w-14 border rounded px-1 py-1 text-sm"
                   />
               </div>
           </div>
@@ -140,9 +140,8 @@ const PropertyBar: React.FC = () => {
               <option value={StartStyle.DOT}>Dot</option>
             </select>
           </div>
-          {/* We could add specific Font Size/Stroke Width overrides for the selected item here too */}
           <div className="flex items-center gap-2">
-             <span className="text-xs font-bold text-gray-500 uppercase">Size</span>
+             <span className="text-xs font-bold text-gray-500 uppercase">Size (px)</span>
              <input
                  type="number"
                  value={selectedAnnotation.fontSize || globalSettings.fontSize}
@@ -150,7 +149,7 @@ const PropertyBar: React.FC = () => {
                      type: 'UPDATE_ANNOTATION', 
                      payload: { id: selectedAnnotation.id, fontSize: parseInt(e.target.value) } 
                  })}
-                 className="w-12 border rounded px-1 py-1 text-sm"
+                 className="w-14 border rounded px-1 py-1 text-sm"
              />
           </div>
         </div>

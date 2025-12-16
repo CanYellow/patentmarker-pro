@@ -30,8 +30,8 @@ const initialState: AppState = {
   viewScale: 0.2, // Start zoomed out to see the whole high-res canvas
   activeAnnotationId: null,
   globalSettings: {
-    fontSize: 24,
-    strokeWidth: 2,
+    fontSize: 50,
+    strokeWidth: 1,
     labelStep: 1,
     labelStartValue: 1,
   },

@@ -169,12 +169,13 @@ const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
 
       <div className="h-px w-10 bg-gray-700 my-1" />
 
+      {/* Swapped Icons as requested */}
       <button
         onClick={addVerticalLine}
         className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition"
         title="Add Vertical Alignment Line"
       >
-        <AlignVerticalJustifyStart size={24} />
+        <AlignHorizontalJustifyStart size={24} className="rotate-90" />
       </button>
 
       <button
@@ -182,7 +183,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
         className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition"
         title="Add Horizontal Alignment Line"
       >
-        <AlignHorizontalJustifyStart size={24} />
+        <AlignVerticalJustifyStart size={24} className="rotate-90" />
       </button>
 
       <button

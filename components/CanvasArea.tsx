@@ -681,7 +681,8 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
                   stroke={ALIGNMENT_LINE_COLOR}
                   strokeWidth={2}
                   dash={[10, 5]}
-                  fillEnabled={false}
+                  // Added transparent fill to allow dragging by clicking inside the box
+                  fill="rgba(59, 130, 246, 0.1)"
                   draggable={state.mode === ToolMode.SELECT}
                   onClick={() => dispatch({ type: 'SELECT_ITEM', payload: 'EXPORT_BOUNDS' })}
                   onDragEnd={(e) => {
@@ -719,6 +720,8 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
                   <Transformer
                       ref={exportTrRef}
                       rotateEnabled={false}
+                      // Allow free resizing (not locked aspect ratio)
+                      keepRatio={false}
                       boundBoxFunc={(oldBox, newBox) => {
                         if (newBox.width < 5 || newBox.height < 5) return oldBox;
                         return newBox;
