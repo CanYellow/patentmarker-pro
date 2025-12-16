@@ -11,7 +11,11 @@ import {
   ZoomIn,
   ZoomOut,
   Trash2,
-  Crop
+  Crop,
+  Lock,
+  Unlock,
+  Undo,
+  Redo
 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import Konva from 'konva';
@@ -169,13 +173,33 @@ const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
 
       <div className="h-px w-10 bg-gray-700 my-1" />
 
-      {/* Swapped Icons as requested */}
+      {/* Undo / Redo */}
+      <button
+        onClick={() => dispatch({ type: 'UNDO' })}
+        disabled={state.past.length === 0}
+        className={`p-2 rounded-lg transition ${state.past.length === 0 ? 'text-gray-600 cursor-not-allowed' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+        title="Undo (Ctrl+Z)"
+      >
+        <Undo size={24} />
+      </button>
+
+      <button
+        onClick={() => dispatch({ type: 'REDO' })}
+        disabled={state.future.length === 0}
+        className={`p-2 rounded-lg transition ${state.future.length === 0 ? 'text-gray-600 cursor-not-allowed' : 'text-gray-400 hover:text-white hover:bg-gray-800'}`}
+        title="Redo (Ctrl+Y)"
+      >
+        <Redo size={24} />
+      </button>
+
+      <div className="h-px w-10 bg-gray-700 my-1" />
+
       <button
         onClick={addVerticalLine}
         className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition"
         title="Add Vertical Alignment Line"
       >
-        <AlignHorizontalJustifyStart size={24} className="rotate-90" />
+        <AlignVerticalJustifyStart size={24} />
       </button>
 
       <button
@@ -183,7 +207,7 @@ const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
         className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition"
         title="Add Horizontal Alignment Line"
       >
-        <AlignVerticalJustifyStart size={24} className="rotate-90" />
+        <AlignHorizontalJustifyStart size={24} />
       </button>
 
       <button
@@ -210,6 +234,17 @@ const Toolbar: React.FC<ToolbarProps> = ({ stageRef }) => {
         accept="image/*"
         className="hidden"
       />
+
+      {/* Lock/Unlock Button */}
+      {state.image.src && (
+          <button
+            onClick={() => dispatch({ type: 'TOGGLE_IMAGE_LOCK' })}
+            className={`p-2 rounded-lg transition ${state.isImageLocked ? 'text-red-400' : 'text-green-400'} hover:bg-gray-800`}
+            title={state.isImageLocked ? "Unlock Image" : "Lock Image"}
+          >
+            {state.isImageLocked ? <Lock size={24} /> : <Unlock size={24} />}
+          </button>
+      )}
 
       <button
         onClick={handleExport}

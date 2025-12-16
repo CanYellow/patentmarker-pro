@@ -54,7 +54,18 @@ export interface GlobalSettings {
   labelStartValue: number; // Initial value if no numbers found
 }
 
+// Data that defines the "Content" of the drawing (for Undo/Redo)
+export interface ContentState {
+  config: CanvasConfig;
+  image: AppState['image'];
+  alignmentLines: AlignmentLine[];
+  annotations: Annotation[];
+  globalSettings: GlobalSettings;
+  exportBounds: Rect | null;
+}
+
 export interface AppState {
+  // Content State (History tracked)
   config: CanvasConfig;
   image: {
     src: string | null;
@@ -67,18 +78,26 @@ export interface AppState {
   };
   alignmentLines: AlignmentLine[];
   annotations: Annotation[];
+  globalSettings: GlobalSettings;
+  exportBounds: Rect | null;
+
+  // UI State (Not history tracked)
+  isImageLocked: boolean;
   mode: ToolMode;
   selectedId: string | null;
-  viewScale: number; // For UI zooming
-  activeAnnotationId: string | null; // Currently being drawn
-  globalSettings: GlobalSettings;
-  exportBounds: Rect | null; // User-defined export crop area
+  viewScale: number;
+  activeAnnotationId: string | null;
+
+  // History Stacks
+  past: ContentState[];
+  future: ContentState[];
 }
 
 export type Action =
   | { type: 'SET_MODE'; payload: ToolMode }
   | { type: 'SET_IMAGE'; payload: { src: string; width: number; height: number } }
   | { type: 'UPDATE_IMAGE_TRANSFORM'; payload: Partial<AppState['image']> }
+  | { type: 'TOGGLE_IMAGE_LOCK' }
   | { type: 'ADD_ALIGNMENT_LINE'; payload: AlignmentLine }
   | { type: 'UPDATE_ALIGNMENT_LINE'; payload: { id: string; value: number } }
   | { type: 'DELETE_ALIGNMENT_LINE'; payload: string }
@@ -89,4 +108,6 @@ export type Action =
   | { type: 'SET_VIEW_SCALE'; payload: number }
   | { type: 'SET_CANVAS_SIZE'; payload: { widthMM: number; heightMM: number } }
   | { type: 'UPDATE_GLOBAL_SETTINGS'; payload: Partial<GlobalSettings> }
-  | { type: 'SET_EXPORT_BOUNDS'; payload: Rect | null };
+  | { type: 'SET_EXPORT_BOUNDS'; payload: Rect | null }
+  | { type: 'UNDO' }
+  | { type: 'REDO' };

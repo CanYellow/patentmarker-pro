@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useMemo } from 'react';
+import React, { useRef, useState, useEffect, useLayoutEffect } from 'react';
 import { Stage, Layer, Image as KonvaImage, Rect, Group, Line, Circle, Text, Arrow, Transformer } from 'react-konva';
 import useImage from 'use-image';
 import Konva from 'konva';
@@ -122,7 +122,7 @@ const getLabelTransform = (
     return { x, y, align: 'left', offsetX, offsetY: height / 2, direction };
 };
 
-const BackgroundImage = ({ imageState, isSelected, onSelect, onChange }: any) => {
+const BackgroundImage = ({ imageState, isSelected, onSelect, onChange, locked }: any) => {
   const [img] = useImage(imageState.src || '', 'anonymous');
   const shapeRef = useRef<Konva.Image>(null);
   const trRef = useRef<Konva.Transformer>(null);
@@ -148,30 +148,36 @@ const BackgroundImage = ({ imageState, isSelected, onSelect, onChange }: any) =>
         scaleX={imageState.scale}
         scaleY={imageState.scale}
         rotation={imageState.rotation}
-        draggable={isSelected}
-        onClick={onSelect}
-        onTap={onSelect}
+        // If locked, we disable listening, allowing clicks to pass through
+        listening={!locked} 
+        draggable={isSelected && !locked}
+        onClick={!locked ? onSelect : undefined}
+        onTap={!locked ? onSelect : undefined}
         onDragEnd={(e) => {
-          onChange({ x: e.target.x(), y: e.target.y() });
+          if (!locked) {
+            onChange({ x: e.target.x(), y: e.target.y() });
+          }
         }}
         onTransformEnd={(e) => {
-          const node = shapeRef.current;
-          if (!node) return;
-          const scaleX = node.scaleX();
-          const scaleY = node.scaleY();
-          node.scaleX(1);
-          node.scaleY(1);
-          onChange({
-            x: node.x(),
-            y: node.y(),
-            width: Math.max(5, node.width() * scaleX),
-            height: Math.max(5, node.height() * scaleY),
-            rotation: node.rotation(),
-            scale: 1
-          });
+          if (!locked) {
+            const node = shapeRef.current;
+            if (!node) return;
+            const scaleX = node.scaleX();
+            const scaleY = node.scaleY();
+            node.scaleX(1);
+            node.scaleY(1);
+            onChange({
+                x: node.x(),
+                y: node.y(),
+                width: Math.max(5, node.width() * scaleX),
+                height: Math.max(5, node.height() * scaleY),
+                rotation: node.rotation(),
+                scale: 1
+            });
+          }
         }}
       />
-      {isSelected && (
+      {isSelected && !locked && (
         <Transformer
           ref={trRef}
           boundBoxFunc={(oldBox, newBox) => {
@@ -195,6 +201,8 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
   // Interaction State
   const isDrawing = useRef(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Separate state for input position to ensure it follows DOM reflows accurately
+  const [inputPosition, setInputPosition] = useState({ top: 0, left: 0 });
 
   // Auto-fit Zoom on Mount (Fix Issue 1)
   useEffect(() => {
@@ -234,8 +242,7 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
       }
   }, [state.selectedId, state.exportBounds]);
 
-
-  // Handle Tab key for cycling styles
+  // Handle Tab key for cycling styles AND Update Input Position on resize/scroll
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't intercept if editing text
@@ -248,6 +255,16 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
           startStyle: cycleStartStyle(prev.startStyle || StartStyle.NONE)
         }) : null);
       }
+      // Undo/Redo Shortcuts
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+          e.preventDefault();
+          dispatch({ type: 'UNDO' });
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+          e.preventDefault();
+          dispatch({ type: 'REDO' });
+      }
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
           if(state.selectedId && !editingId) {
             if (state.selectedId === 'EXPORT_BOUNDS') {
@@ -264,6 +281,55 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [tempAnnotation, state.selectedId, editingId]);
 
+  // Accurately calculate input position using DOM Rects to account for Flexbox centering + Scroll
+  useLayoutEffect(() => {
+      if (editingId && stageRef.current && containerRef.current) {
+          const stage = stageRef.current;
+          const container = containerRef.current;
+          const editingAnnotation = state.annotations.find(a => a.id === editingId);
+          
+          if (editingAnnotation) {
+             const fontSize = editingAnnotation.fontSize || state.globalSettings.fontSize;
+             const layout = getLabelTransform(
+                editingAnnotation.endPoint, 
+                editingAnnotation.controlPoint2, 
+                editingAnnotation.text, 
+                fontSize, 
+                TEXT_OFFSET_PX
+             );
+             
+             // Calculate width to determine visual center
+             const width = getTextWidth(editingAnnotation.text, fontSize);
+             let visualCenterX = layout.x;
+             let visualCenterY = layout.y;
+             if (layout.direction === 'LEFT') visualCenterX -= width / 2;
+             if (layout.direction === 'RIGHT') visualCenterX += width / 2;
+             
+             // Coordinates relative to the Stage (inside padding)
+             const nodeX = visualCenterX;
+             const nodeY = visualCenterY;
+
+             // Stage's PADDING (defined in <Stage x={50} y={50} ...>)
+             const STAGE_PADDING_X = 50;
+             const STAGE_PADDING_Y = 50;
+
+             // Get the bounding box of the Stage's content <div> (which includes scale) relative to viewport
+             // stage.container() returns the div wrapping the canvas
+             const stageRect = stage.container().getBoundingClientRect();
+             const containerRect = container.getBoundingClientRect();
+
+             // Calculate offset of stage content relative to container
+             const offsetLeft = stageRect.left - containerRect.left + container.scrollLeft;
+             const offsetTop = stageRect.top - containerRect.top + container.scrollTop;
+             
+             // Final position: Offset + (Internal Padding + Node Position) * Scale
+             const finalX = offsetLeft + (STAGE_PADDING_X + nodeX) * state.viewScale;
+             const finalY = offsetTop + (STAGE_PADDING_Y + nodeY) * state.viewScale;
+
+             setInputPosition({ left: finalX, top: finalY });
+          }
+      }
+  }, [editingId, state.viewScale, state.annotations, state.globalSettings.fontSize]);
 
   const handleStageMouseDown = (e: Konva.KonvaEventObject<MouseEvent>) => {
     // If clicking outside while editing, commit and close
@@ -340,46 +406,19 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
     isDrawing.current = false;
   };
 
-  // Determine Input Style and Position
+  // Determine Input Style
   let inputStyle: React.CSSProperties = { display: 'none' };
   const editingAnnotation = state.annotations.find(a => a.id === editingId);
   
   if (editingAnnotation) {
     const fontSize = editingAnnotation.fontSize || state.globalSettings.fontSize;
-    const layout = getLabelTransform(
-        editingAnnotation.endPoint, 
-        editingAnnotation.controlPoint2, 
-        editingAnnotation.text, 
-        fontSize, 
-        TEXT_OFFSET_PX
-    );
-    
-    // Convert canvas pos to screen pos
-    const screenX = 50 + layout.x * state.viewScale;
-    const screenY = 50 + layout.y * state.viewScale;
-
-    // Adjust for HTML element origin (top-left) vs Konva offset logic
-    // We want the input to overlap the text exactly.
-    // Layout.x/y is the Center-Left, Center-Right, or Center-Top/Bottom depending on direction.
-    // Simpler approach for Input: Centered on the calculated visual center.
-    
-    // Calculate visual center of text
-    let visualCenterX = layout.x;
-    let visualCenterY = layout.y;
-
     const width = getTextWidth(editingAnnotation.text, fontSize);
-    
-    if (layout.direction === 'LEFT') visualCenterX -= width / 2;
-    if (layout.direction === 'RIGHT') visualCenterX += width / 2;
-    // For UP/DOWN, x is already centered.
-    
-    // Y is roughly center due to logic in getLabelTransform
     
     inputStyle = {
         display: 'block',
         position: 'absolute',
-        left: `${50 + visualCenterX * state.viewScale}px`,
-        top: `${50 + visualCenterY * state.viewScale}px`,
+        left: `${inputPosition.left}px`,
+        top: `${inputPosition.top}px`,
         transform: 'translate(-50%, -50%)',
         fontSize: `${fontSize * state.viewScale}px`,
         fontFamily: 'Arial',
@@ -396,12 +435,12 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
   }
 
   const handleInputKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-        setEditingId(null);
-    } else if (e.key === 'Tab') {
-        e.preventDefault();
+    // Both Enter and Tab now cycle to the next text box
+    if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault(); // Prevent newline in input or default tab focus change
         const currentIndex = state.annotations.findIndex(a => a.id === editingId);
         if (currentIndex !== -1) {
+            // Cycle forward. If at end, loop to start.
             const nextIndex = (currentIndex + 1) % state.annotations.length;
             const nextId = state.annotations[nextIndex].id;
             setEditingId(nextId);
@@ -459,6 +498,7 @@ const CanvasArea: React.FC<CanvasAreaProps> = ({ stageRef }) => {
             isSelected={state.selectedId === 'IMAGE' && state.mode === ToolMode.SELECT}
             onSelect={() => dispatch({ type: 'SELECT_ITEM', payload: 'IMAGE' })}
             onChange={(newAttrs: any) => dispatch({ type: 'UPDATE_IMAGE_TRANSFORM', payload: newAttrs })}
+            locked={state.isImageLocked}
           />
 
           {/* Annotations Layer */}
